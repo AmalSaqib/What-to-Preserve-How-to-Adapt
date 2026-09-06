@@ -1,7 +1,5 @@
 # Where and How to Adapt
 
-[![CI](https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt/actions/workflows/ci.yml/badge.svg)](https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt/actions/workflows/ci.yml)
-
 Research code for studying depth-constrained and scale-aware adaptation in
 continual 3D medical image segmentation. The implementation extends
 [Lifelong nnU-Net](https://github.com/MECLabTUDA/Lifelong-nnUNet) and nnU-Net
