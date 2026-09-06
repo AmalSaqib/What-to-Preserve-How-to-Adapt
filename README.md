@@ -1,100 +1,194 @@
-# Lifelong-nnUNet
+# Where and How to Adapt
 
-This repository extends the popular [nnUNet](https://github.com/MIC-DKFZ/nnUNet) framework with methods that allow for **safer on-the-wild use**. This includes functionality for **continual learning** and **out-of-distribution detection**. With only one line of code, you can now train a model sequentially with different datasets.
+[![CI](https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt/actions/workflows/ci.yml/badge.svg)](https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt/actions/workflows/ci.yml)
 
-<img src="https://user-images.githubusercontent.com/34241665/167388880-f496a195-2018-4a1c-84c6-4badad6cb6c2.png" width="700" />
+Research code for studying depth-constrained and scale-aware adaptation in
+continual 3D medical image segmentation. The implementation extends
+[Lifelong nnU-Net](https://github.com/MECLabTUDA/Lifelong-nnUNet) and nnU-Net
+v1 with:
 
-You can monitor the performance throughout the training process, as illustrated below for the task of hippocampus segmentation, and output continual learning metrics such as *backward* and *forward transfer*.
+- explicit encoder, bottleneck, and decoder freezing policies;
+- static block-specific learning rates calibrated from initial relative
+  gradient norms;
+- a machine-readable registry for every paper training configuration;
+- reproducible preprocessing, evaluation, displacement, bootstrap, and
+  activation-ablation utilities.
 
-<img src="https://user-images.githubusercontent.com/34241665/167387183-ef2ee7f4-01d4-4749-ba22-07017b8150af.png" width="400" />
+The repository contains **no medical images, patient identifiers, model
+checkpoints, or per-patient predictions**.
 
-The supported nnUNet version is specified in the [requirements.txt](requirements.txt) file. Please note that, at times, files are replicated from this version and adapted as needed. If you wish to use a newer nnUNet version, please make sure that all adapted files are consistent with that version. For the current `continual_learning` branch, this does not apply, ie. no files are replicated.
+## Repository status
 
+This is research software built on the Lifelong nnU-Net codebase. The
+paper-facing interface lives in [`reproducibility/`](reproducibility/); use it
+instead of constructing long trainer commands manually. Expensive operations
+are dry runs unless `--execute` is supplied.
 
-## Table Of Contents
+## Quick start
 
-1. [Introduction](#introduction)
-2. [Installation](#installation)
-3. [Required Paths](#required-paths)
-4. [Mapping Datasets to Other Labels](#mapping-datasets-to-other-labels)
-5. [License](#license)
+The recorded experiments use Python 3.9 and nnU-Net v1. GPU/CUDA installation
+is platform-specific; install the matching PyTorch build before or while
+creating the environment.
 
-
-## Introduction
-
-This branch currently includes the following methods for Continual Learning:
-* Sequential Training
-* Rehearsal Training
-* Riemannian Walk
-* Elastic Weight Consolidation
-* Learning Without Forgetting
-* Modeling the Background
-* Pseudo-labeling and LOcal Pod
-
-All other methods have been used for experiments and are not further discussed since the name should be self explanatory, for instance:
-* Elastic Weight Consolidation only applied on LayerNorm layers of the Vision Transformer ([ewc_ln](/nnunet_ext/training/network_training/ewc_ln/nnUNetTrainerEWCLN.py))
-* Elastic Weight Consolidation only applied on nnU-Net layers ([ewc_unet](/nnunet_ext/training/network_training/ewc_unet/nnUNetTrainerEWCUNet.py))
-* Elastic Weight Consolidation only applied on Vision Transformer layers ([ewc_vit](/nnunet_ext/training/network_training/ewc_vit/nnUNetTrainerEWCViT.py))
-* Sequential Training while freezing all parameters except the LayerNorm parameters from the Vision Transformer after the successfull training of the first task ([frozen_nonln](/nnunet_ext/training/network_training/Frozen_nonln/nnUNetTrainerFrozenNonLN.py))
-* Sequential Training while freezing all parameters from the Vision Transformer after the successfull training of the first task ([frozen_vit](/nnunet_ext/training/network_training/frozen_vit/nnUNetTrainerFrozenViT.py))
-* Sequential Training while freezing all parameters from the nnU-Net after the successfull training of the first task ([frozen_unet](/nnunet_ext/training/network_training/frozen_unet/nnUNetTrainerFrozenUNet.py))
-
-Note that all those just described trainers are not further described in the [documentations](documentation/continual_learning.md). Further, all those trainers can only be used with the [Generic_ViT_UNet](https://github.com/camgbus/Lifelong-nnUNet/blob/continual_learning/nnunet_ext/network_architecture/generic_ViT_UNet.py#L14) architecture instead of the classic [Generic_UNet](https://github.com/MIC-DKFZ/nnUNet/blob/master/nnunet/network_architecture/generic_UNet.py#L167) architecture, so the `--use_vit` and all corresponding ViT related arguments have to be set or the training will fail.
-
-
-For instructions on how to run these please see [here](documentation/continual_learning.md).
-
-
-## Installation
-
-The simplest way to install all dependencies is by using [Anaconda](https://conda.io/projects/conda/en/latest/index.html):
-
-1. Create a Python 3.9 environment as `conda create -n <your_conda_env> python=3.9` and activate it as `conda activate  <your_conda_env>`.
-2. Install CUDA and PyTorch through conda with the command specified by [PyTorch](https://pytorch.org/). The command for Linux was at the time `conda install pytorch torchvision cudatoolkit=11.3 -c pytorch`. At least PyTorch version 1.6 is required, and the code was last tested with version 1.9. Pytorch and TorchVision versions can be specified during the installation as `conda install pytorch==<X.X.X> torchvision==<X.X.X> cudatoolkit=<X.X> -c pytorch`. Note that the cudatoolkit version should be of the same major version as the CUDA version installed on the machine, e.g. when using CUDA 11.x one should install a cudatoolkit 11.x version, but not a cudatoolkit 10.x version.
-3. Navigate to the project root (where `setup.py` lives).
-4. Execute `pip install -r requirements.txt` to install all required packages. With this step, the [original nnUNet](https://github.com/MIC-DKFZ/nnUNet) will be installed as well, so all commands described there will work. Please note that the nnUNet commit to install is specified in requirements.txt, the code may not work for other versions of the nnUNet.
-5. Set your paths as described [here](documentation/setting_up_paths.md). You should set [these](#required-paths) paths.
-6. Execute `pytest` to ensure that everything is working. All tests should work, however multiple tests specifically use at least one GPU. Please refer to [this file](documentation/pytest_informations.md) for more information.
-
-
-## Required Paths
-
-Following environment variables must be set for all Lifelong-nnUNet branches:
-
-* nnUNet_raw_data_base
-* nnUNet_preprocessed
-* RESULTS_FOLDER
-* EVALUATION_FOLDER
-
-Refer to [this file](documentation/setting_up_paths.md) for a description of how to set these.
-
-## Benchmark results
-
-In our preprint [Lifelong nnUNet: a framework for standardized medical continual learning](https://www.researchsquare.com/article/rs-1582100/v1), we summarize benchmark results for three medical imaging use cases: segmentation of the prostate and hippocampus on MRIs and of pulmonary embolism in chest CTs.
-
-<img src="https://user-images.githubusercontent.com/34241665/167640164-097836f5-acdf-4025-9d56-938b473d0c78.png" width="600" />
-
-## Mapping Datasets to Other Labels
-
-In certain cases you may wish to change the meaning of certain labels or merge different labels in order to harmonize label structures between datasets. Please refer to [this file](documentation/change_mask_labels.md) for instructions on how to do this.
-
-<img src="https://user-images.githubusercontent.com/34241665/167389637-09eeb24d-7a34-43cf-8dc1-baf76b8dd17d.png" width="400" />
-
-## Citations
-If you are using Lifelong-nnUNet for your article, please cite the following paper:
-```
-@article{gonzalez2023lifelong,
-  title={Lifelong nnU-Net: a framework for standardized medical continual learning},
-  author={Gonz{\'a}lez, Camila and Ranem, Amin and Pinto dos Santos, Daniel and Othman, Ahmed and Mukhopadhyay, Anirban},
-  journal={Scientific Reports},
-  volume={13},
-  number={1},
-  pages={9381},
-  year={2023},
-  publisher={Nature Publishing Group UK London}
-}
+```bash
+conda env create -f environment.yml
+conda activate depth-aware-cl
 ```
 
-## License
+Configure local storage. The default places generated artifacts in the ignored
+`data/` directory inside the clone:
 
-[Apache License 2.0](https://choosealicense.com/licenses/apache-2.0/)
+```bash
+source reproducibility/config.example.env
+```
+
+Validate nnU-Net-formatted raw data without changing it:
+
+```bash
+python reproducibility/preprocess.py
+```
+
+Inspect the registered experiments and render one command:
+
+```bash
+python reproducibility/run_experiment.py --list
+python reproducibility/run_experiment.py ecpc_middle_gradient_normalized
+```
+
+After checking the rendered command, train and evaluate:
+
+```bash
+python reproducibility/run_experiment.py ecpc_middle_gradient_normalized \
+  --stage train --execute
+python reproducibility/run_experiment.py ecpc_middle_gradient_normalized \
+  --stage evaluate --execute
+```
+
+## Data preparation
+
+Reproduction starts from de-identified, nnU-Net-formatted NIfTI datasets. The
+institution-specific export, conversion, and de-identification code is not
+available and is not implied to be part of this release.
+
+```text
+data/nnUNet_raw_base/nnUNet_raw_data/TaskXXX_Name/
+├── dataset.json
+├── imagesTr/CASE_0000.nii.gz
+├── imagesTr/CASE_0001.nii.gz
+├── labelsTr/CASE.nii.gz
+├── imagesTs/CASE_0000.nii.gz
+└── labelsTs/CASE.nii.gz
+```
+
+The paper uses two input channels. ECPC-IDS uses PET and CT. For the
+single-modality MRI tasks, the supplied nnU-Net representation must use the
+same two-channel convention as the checkpoints. See [data documentation](docs/DATA.md).
+
+To validate and then run standard nnU-Net planning/preprocessing:
+
+```bash
+python reproducibility/preprocess.py
+python reproducibility/preprocess.py --execute
+```
+
+## Experiments
+
+[`reproducibility/experiments.json`](reproducibility/experiments.json) is the
+single source of truth for task order, trainable blocks, plans, learning rates,
+seeds, and baseline hyperparameters.
+
+| Group | Contents |
+|---|---|
+| `single_task` | Independent UMD, ECPC-IDS, and UT-EndoMRI models |
+| `fixed_lr_depth` | Frozen, bottleneck, progressive nested regions, and outer-block diagnostic |
+| `scale_control` | Gradient-normalized extents and approximate RMS-targeted broad run |
+| `cross_transition` | UMD to UT-EndoMRI bottleneck/middle/broad replication |
+| `seed_replicates` | Additional fixed-LR adaptation seeds |
+| `continual_baselines` | Sequential, rehearsal, LwF, and EWC |
+
+Render a complete group without starting it:
+
+```bash
+python reproducibility/run_experiment.py --group scale_control
+```
+
+The joint MultiTalent baseline uses a separate nnU-Net v2 environment; see
+[`reproducibility/MULTITALENT.md`](reproducibility/MULTITALENT.md).
+
+## Analysis
+
+Measure aggregate and per-block displacement between trusted checkpoints:
+
+```bash
+python reproducibility/checkpoint_displacement.py \
+  --initial /path/to/pre_adaptation.model \
+  --final /path/to/post_adaptation.model \
+  --blocks E4 E5 B D5 D4 \
+  --output outputs/middle_displacement.csv
+```
+
+Compute held-out-case bootstrap intervals:
+
+```bash
+python reproducibility/bootstrap_metrics.py \
+  --baseline /path/to/umd_before/val_metrics_eval.json \
+  --retained /path/to/umd_after/val_metrics_eval.json \
+  --new-task /path/to/ecpc_after/val_metrics_eval.json \
+  --output outputs/middle_bootstrap.json
+```
+
+Render the complete activation-ablation command set without executing it:
+
+```bash
+python reproducibility/block_ablation.py \
+  --checkpoint-path /path/to/model_final_checkpoint.model \
+  --evaluation-root "$EVALUATION_FOLDER" \
+  --raw-task-root "$nnUNet_raw_data_base/nnUNet_raw_data" \
+  --output-dir outputs/block_ablation \
+  --trained-on 666 555 --use-model 666 555 --use-head 666 \
+  --evaluate-on 666 \
+  --trainer nnUNetTrainerSequentialChannelPreserve \
+  --plans nnUNetPlansv2.1_unfreeze_E456D45
+```
+
+Add `--execute` only after verifying paths and rendered commands. Activation
+ablation measures functional reliance at inference; it is not evidence that
+updating a block causes forgetting.
+
+## Reproducibility boundaries
+
+- `PAPER_INIT_CHECKPOINT` must identify the common pre-adaptation Task-1
+  checkpoint used by controlled two-task experiments.
+- Case bootstrap intervals quantify finite evaluation-cohort uncertainty, not
+  training-seed variability.
+- Gradient calibration is performed once on initial batches. The resulting
+  block multipliers remain fixed while the common polynomial schedule decays.
+- Approximate RMS matching is assessed at the final checkpoint; it is not
+  enforced online.
+- Dataset conversion and access remain governed by the original dataset
+  providers and institutional approvals.
+
+See the complete [method documentation](docs/METHOD.md),
+[experiment guide](docs/EXPERIMENTS.md), and
+[reported-result schema](docs/RESULTS.md). The exact recorded software stack is
+listed in [`docs/ENVIRONMENT.md`](docs/ENVIRONMENT.md).
+
+## Development checks
+
+The lightweight checks do not require datasets or a GPU:
+
+```bash
+python -m unittest discover -s reproducibility/tests -v
+python reproducibility/run_experiment.py --list > /dev/null
+python -m compileall -q reproducibility
+```
+
+Full upstream tests may require the complete nnU-Net environment and a CUDA
+device.
+
+## Upstream attribution and license
+
+This repository is derived from Lifelong nnU-Net and includes its original
+continual-learning implementations. Please cite both the associated study and
+the upstream framework when using the software. The code is distributed under
+the [Apache License 2.0](LICENSE).

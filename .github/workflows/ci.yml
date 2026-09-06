@@ -1,0 +1,23 @@
+name: repository checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  registry-and-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+      - name: Validate experiment registry
+        run: python reproducibility/run_experiment.py --list > /dev/null
+      - name: Run lightweight tests
+        run: python -m unittest discover -s reproducibility/tests -v
+      - name: Compile paper-facing Python utilities
+        run: python -m compileall -q reproducibility

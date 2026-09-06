@@ -1,0 +1,4 @@
+# Lightweight dependencies used by the checkpoint and statistical analyses.
+matplotlib>=3.5,<4
+numpy>=1.21,<3
+scipy>=1.7,<2

@@ -110,12 +110,36 @@ def run_evaluation(evaluator: str):
                         help="This will prevent the evaluator to delete the inference output after computing the evaluation metrics.")
     parser.add_argument('-legacy_structure', required=False, default=False, action="store_true",
                         help="Set this to export segmentation results in the structure of the `nnUNet_evaluate` command")
+    parser.add_argument('--drop_encoder_block', type=int, default=None,
+                        help="If set, drop feature channels at conv_blocks_context[block_id] during inference.")
+    parser.add_argument('--drop_decoder_block', type=int, default=None,
+                        help="If set, drop feature channels at conv_blocks_localization[block_id] during inference.")
+    parser.add_argument('--drop_feature_ratio', type=float, default=0.1,
+                        help="Fraction of channels to zero out in the selected block.")
+    parser.add_argument('--drop_seed', type=int, default=0,
+                        help="Seed for deterministic feature-channel selection.")
+    parser.add_argument('--drop_channel_list_path', type=str, default=None,
+                        help="Optional .npy path with explicit channel indices to drop.")
 
     # -------------------------------
     # Extract arguments from parser
     # -------------------------------
     # -- Extract parser (nnUNet) arguments -- #
     args = parser.parse_args()
+    if args.drop_encoder_block is not None and args.drop_decoder_block is not None:
+        parser.error("select at most one of --drop_encoder_block and --drop_decoder_block")
+    if not 0.0 < args.drop_feature_ratio <= 1.0:
+        parser.error("--drop_feature_ratio must be in the interval (0, 1]")
+    if args.drop_channel_list_path is not None:
+        if args.drop_encoder_block is None and args.drop_decoder_block is None:
+            parser.error("--drop_channel_list_path requires a selected encoder or decoder block")
+        if not os.path.isfile(args.drop_channel_list_path):
+            parser.error("--drop_channel_list_path does not exist")
+    if evaluator == "evaluator2" and args.include_training_data:
+        parser.error(
+            "nnUNet_evaluate2 uses the held-out imagesTs/labelsTs protocol; "
+            "--include_training_data is not supported"
+        )
     network = args.network
     network_trainer = args.network_trainer
     plans_identifier = args.p
@@ -235,7 +259,12 @@ def run_evaluation(evaluator: str):
         for f in fold:
             evaluator2.run_evaluation2(network, network_trainer, (tasks_for_folder, char_to_join_tasks), evaluate_on_tasks, model_name_joined, args.enable_tta, mixed_precision, args.chk, f,
                                     version, vit_type, plans_identifier, do_LSA, do_SPT, always_use_last_head, use_head, use_model, EXT_MAP[network_trainer], transfer_heads,
-                                    use_vit, ViT_task_specific_ln, do_pod, args.include_training_data, args.evaluate_initialization, args.no_delete, args.legacy_structure)
+                                    use_vit, ViT_task_specific_ln, do_pod, args.include_training_data, args.evaluate_initialization, args.no_delete, args.legacy_structure,
+                                    drop_encoder_block=args.drop_encoder_block,
+                                    drop_decoder_block=args.drop_decoder_block,
+                                    drop_feature_ratio=args.drop_feature_ratio,
+                                    drop_seed=args.drop_seed,
+                                    drop_channel_list_path=args.drop_channel_list_path)
 
 # -- Main function for setup execution -- #
 def main():

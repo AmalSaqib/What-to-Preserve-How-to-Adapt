@@ -154,7 +154,12 @@ class nnUNetTrainerFrozenUNet(nnUNetTrainerMultiHead):
             # -- Ensure that the split that has been previously used and the current one are equal -- #
             # -- NOTE: Do this after initialization, since the splits might be different before but still lead to the same level after -- #
             # -- Split simplification. -- #
-            prev_split = self.already_trained_on[str(self.fold)]['used_split']
+            prev_split = self.already_trained_on.get(str(self.fold), {}).get('used_split', None)
+            if prev_split is None:
+                # Backward compatibility for older metadata that has no used_split key.
+                prev_split = self.mh_network.split
+                self.already_trained_on[str(self.fold)]['used_split'] = prev_split
+                write_pickle(self.already_trained_on, join(self.trained_on_path, self.extension+'_trained_on.pkl'))
             assert self.mh_network.split == prev_split,\
                 "To continue training on the fold {} the same split, ie. \'{}\' needs to be provided, not \'{}\'.".format(self.fold, prev_split, self.mh_network.split)
             # -- Delete the prev_split --> not necessary anymore -- #

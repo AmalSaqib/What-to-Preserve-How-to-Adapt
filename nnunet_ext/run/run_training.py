@@ -119,6 +119,9 @@ def run_training(extension='multihead'):
                              ' an init network_trainer to do (extensional) training on or not. If so, -initialize_with_network_trainer '
                              ' needs to be provided as well.'
                              ' Default: False')
+    parser.add_argument('--init_from_trainer_path', type=str, required=False, default=None,
+                        help='Optional explicit path to a pre-trained trainer directory (trainer root or fold_X) that '
+                             'should be used as initialization source when --init_seq is set.')
     parser.add_argument('-initialize_with_network_trainer', type=str, required=False, default=None,
                         help='Specify the network_trainer that should be used as a foundation to start training sequentially.'
                             ' The network_trainer of the first provided task needs to be finished with training and either a (extensional) network_trainer'
@@ -230,6 +233,29 @@ def run_training(extension='multihead'):
         parser.add_argument('--adaptive', required=False, default=False, action="store_true",
                             help='Set this flag if the EWC loss should be changed during the frozen training process (ewc_lambda*e^{-1/3}). '
                                  ' Default: The EWC loss will not be altered.')
+    if extension == 'sequential_channel_preserve':
+        parser.add_argument('--full_body_freeze', action='store_true', required=False, default=False,
+                            help='If set, fully freeze the shared body from task 2 onward and train only task heads.')
+        parser.add_argument('--encoder_unfreeze', nargs='+', type=int, required=False, default=None,
+                            help='Encoder block indices to unfreeze from task 2 onward (e.g. --encoder_unfreeze 6 7).')
+        parser.add_argument('--decoder_unfreeze', nargs='+', type=int, required=False, default=None,
+                            help='Decoder block indices to unfreeze from task 2 onward, with D0 closest to output and the highest index closest to bottleneck.')
+        parser.add_argument('--gradient_lr_control', action='store_true', required=False, default=False,
+                            help='Calibrate static per-block learning rates to equalize initial relative gradient updates.')
+        parser.add_argument('--gradient_calibration_batches', type=int, required=False, default=20,
+                            help='Number of current-task batches used for gradient-only LR calibration (default: 20).')
+        parser.add_argument('--gradient_lr_reference', type=str, required=False, default='B',
+                            help='Trainable block whose base learning rate defines the target relative update (default: B).')
+        parser.add_argument('--gradient_lr_min_multiplier', type=float, required=False, default=0.1,
+                            help='Minimum calibrated block learning-rate multiplier (default: 0.1).')
+        parser.add_argument('--gradient_lr_max_multiplier', type=float, required=False, default=10.0,
+                            help='Maximum calibrated block learning-rate multiplier (default: 10.0).')
+        parser.add_argument('--gradient_displacement_log_interval', type=int, required=False, default=5,
+                            help='Epoch interval for cumulative per-block displacement logging (default: 5).')
+        parser.add_argument('--base_learning_rate', type=float, required=False, default=None,
+                            help='Override the trainer base learning rate while preserving its schedule shape.')
+        parser.add_argument('--run_seed', type=int, required=False, default=12345,
+                            help='Seed for model/head initialization, augmentation, and optimization (default: 12345).')
 
     # -------------------------------
     # Extract arguments from parser
@@ -300,10 +326,14 @@ def run_training(extension='multihead'):
     
     # -- Extract necessary information for initilization -- #
     prev_trainer = args.initialize_with_network_trainer # Trainer for first task with first fold
+    init_from_trainer_path = args.init_from_trainer_path
     if init_seq:
         # -- Check that prev_trainer is provided -- #
         assert prev_trainer is not None,\
             "When using the first provided task as a base for training with an extension, the network_trainer needs to be specified as well."
+        if init_from_trainer_path is not None:
+            assert os.path.isdir(init_from_trainer_path),\
+                "The provided --init_from_trainer_path does not exist or is not a directory: {}".format(init_from_trainer_path)
     
     # -- Set init_identifier if not provided -- #
     init_identifier = args.used_identifier_in_init_network_trainer  # Extract init_identifyer
@@ -470,6 +500,25 @@ def run_training(extension='multihead'):
     if extension in ['froz_ewc']:
         assert use_vit, "The nnUNetTrainerFrozEWC can only be used with a ViT_U-Net.."
         adaptive = args.adaptive
+    full_body_freeze, encoder_unfreeze, decoder_unfreeze = False, [], []
+    gradient_lr_control = False
+    gradient_calibration_batches = 20
+    gradient_lr_reference = 'B'
+    gradient_lr_min_multiplier = 0.1
+    gradient_lr_max_multiplier = 10.0
+    gradient_displacement_log_interval = 5
+    base_learning_rate = None
+    if extension == 'sequential_channel_preserve':
+        full_body_freeze = args.full_body_freeze
+        encoder_unfreeze = args.encoder_unfreeze or []
+        decoder_unfreeze = args.decoder_unfreeze or []
+        gradient_lr_control = args.gradient_lr_control
+        gradient_calibration_batches = args.gradient_calibration_batches
+        gradient_lr_reference = args.gradient_lr_reference
+        gradient_lr_min_multiplier = args.gradient_lr_min_multiplier
+        gradient_lr_max_multiplier = args.gradient_lr_max_multiplier
+        gradient_displacement_log_interval = args.gradient_displacement_log_interval
+        base_learning_rate = args.base_learning_rate
     
     # -------------------------------
     # Transform tasks to task names
@@ -520,13 +569,25 @@ def run_training(extension='multihead'):
     ownm1_args = {'ewc_lambda': ewc_lambda, 'pod_lambda': pod_lambda, 'pod_scales': pod_scales, 'do_pod': do_pod, 'mib_lkd': mib_lkd, 'mib_alpha': mib_alpha, **basic_exts}
     ownm3_args = {'do_LSA': do_LSA, 'do_SPT': do_SPT, **ownm1_args, **basic_exts}
     ownm4_args = {'ewc_lambda': ewc_lambda, 'pod_lambda': pod_lambda, 'pod_scales': pod_scales, 'do_pod': do_pod, 'pseudo_alpha': pseudo_alpha, **basic_exts}
+    sequential_channel_preserve_args = {'full_body_freeze': full_body_freeze,
+                                        'encoder_unfreeze': encoder_unfreeze,
+                                        'decoder_unfreeze': decoder_unfreeze,
+                                        'gradient_lr_control': gradient_lr_control,
+                                        'gradient_calibration_batches': gradient_calibration_batches,
+                                        'gradient_lr_reference': gradient_lr_reference,
+                                        'gradient_lr_min_multiplier': gradient_lr_min_multiplier,
+                                        'gradient_lr_max_multiplier': gradient_lr_max_multiplier,
+                                        'gradient_displacement_log_interval': gradient_displacement_log_interval,
+                                        'base_learning_rate': base_learning_rate,
+                                        'run_seed': args.run_seed,
+                                        **basic_exts}
     
     # -- Join the dictionaries into a dictionary with the corresponding class name -- #
     args_f = {'nnUNetTrainerRW': rw_args, 'nnUNetTrainerMultiHead': basic_exts,
               'nnUNetTrainerFrozenViT': basic_exts, 'nnUNetTrainerEWCViT': ewc_args,
               'nnUNetTrainerFrozenNonLN': basic_exts, 'nnUNetTrainerEWCLN': ewc_args,
               'nnUNetTrainerFrozenUNet': basic_exts, 'nnUNetTrainerEWCUNet': ewc_args,
-              'nnUNetTrainerSequential': basic_exts, 'nnUNetTrainerRehearsal': reh_args,
+              'nnUNetTrainerSequential': basic_exts, 'nnUNetTrainerSequentialChannelPreserve': sequential_channel_preserve_args, 'nnUNetTrainerRehearsal': reh_args,
               'nnUNetTrainerMiB': mib_args, 'nnUNetTrainerEWC': ewc_args, 'nnUNetTrainerLWF': lwf_args,
               'nnUNetTrainerPLOP': plop_args, 'nnUNetTrainerV2': basic_args, 'nnViTUNetTrainer': basic_vit,
               'nnUNetTrainerPOD': plop_args, 'nnUNetTrainerFrozEWC': froz_ewc_args,# 'nnUNetTrainerFrozEWCFinal': ewc_args,
@@ -736,6 +797,10 @@ def run_training(extension='multihead'):
                 # -- Set began_with to first task since at this point it is either a task or it can be None if previous fold was not trained in full -- #
                 began_with = tasks[0]
     
+        # -- Cache base planner bits for SequentialChannelPreserve init flow -- #
+        init_base_plans_file = None
+        init_base_stage = None
+
         # -- Loop through the tasks and train for each task the (finished) model -- #
         for idx, t in enumerate(tasks):
             # -- Check if the first task is the same as began_with so there is no misunderstanding -- #
@@ -793,6 +858,11 @@ def run_training(extension='multihead'):
                 plans_file, prev_trainer_path, dataset_directory, batch_dice, stage, \
                 trainer_class = get_default_configuration(network, all_tasks[0], running_task, prev_trainer, prev_directory,\
                                                           init_identifier, extension_type=extension)
+                if extension == 'sequential_channel_preserve':
+                    init_base_plans_file = plans_file
+                    init_base_stage = stage
+                if init_from_trainer_path is not None:
+                    prev_trainer_path = init_from_trainer_path
                 
                 # -- Ensure that trainer_class is not None -- #
                 if trainer_class is None:
@@ -805,11 +875,23 @@ def run_training(extension='multihead'):
             
             # -- Set the correct trainer, but only for very first task (with or without prev_trainer) -- #
             if idx == 0 or idx == 1 and init_seq:
+                trainer_plans_file = plans_file
+                trainer_stage = stage
+                # Keep current task dataset_directory and batch_dice (sequential-like data flow)
+                trainer_dataset_directory = dataset_directory
+                trainer_batch_dice = batch_dice
+
+                if idx == 1 and extension == 'sequential_channel_preserve':
+                    assert init_base_plans_file is not None and init_base_stage is not None, \
+                        "Missing cached base plans for sequential_channel_preserve init flow."
+                    trainer_plans_file = init_base_plans_file
+                    trainer_stage = init_base_stage
+
                 # -- To initialize a new trainer, always use the first task since this shapes the network structure. -- #
                 # -- During training the tasks will be updated, so this should cause no problems -- #
                 # -- Set the trainer with corresponding arguments --> can only be an extension from here on -- #
-                trainer = trainer_class(split, all_tasks[0], plans_file, t_fold, output_folder=output_folder_name, dataset_directory=dataset_directory,\
-                                        batch_dice=batch_dice, stage=stage, network=network,
+                trainer = trainer_class(split, all_tasks[0], trainer_plans_file, t_fold, output_folder=output_folder_name, dataset_directory=trainer_dataset_directory,\
+                                        batch_dice=trainer_batch_dice, stage=trainer_stage, network=network,
                                         already_trained_on=already_trained_on, **(args_f[trainer_class.__name__]))
                 trainer.initialize(not validation_only, num_epochs=num_epochs, prev_trainer_path=prev_trainer_path)
 
@@ -911,6 +993,11 @@ def main_sequential():
     r"""Run training for Sequential Trainer.
     """
     run_training(extension='sequential')
+
+# -- Main function for setup execution of SequentialChannelPreserve method -- #
+def main_sequential_channel_preserve():
+    r"""Run training for SequentialChannelPreserve Trainer."""
+    run_training(extension='sequential_channel_preserve')
 
 # -- Main function for setup execution of EWC_LN method -- #
 def main_ewc_ln():

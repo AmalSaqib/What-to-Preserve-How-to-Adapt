@@ -1,0 +1,17 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper and Lifelong nnU-Net."
+title: "Depth-wise update allocation for continual nnU-Net segmentation"
+type: software
+version: 0.1.0
+date-released: 2026-09-06
+authors:
+  - family-names: Saleem
+    given-names: Tausifa Jan
+  - family-names: Saqib
+    given-names: Amal
+  - family-names: Saeed
+    given-names: Numan
+  - family-names: Yaqub
+    given-names: Mohammad
+license: Apache-2.0
+repository-code: "https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt"

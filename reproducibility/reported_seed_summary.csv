@@ -1,0 +1,4 @@
+transition,configuration,seeds,old_task_forgetting_mean,old_task_forgetting_sample_sd,new_task_dice_mean,new_task_dice_sample_sd
+UMD->ECPC,bottleneck,"12345;23456;34567",0.0000,0.0008,0.0124,0.0156
+UMD->ECPC,middle_shared_lr,"12345;23456;34567",0.3629,0.0793,0.7403,0.0098
+UMD->ECPC,broad_lr_0.008,"12345;23456;34567",0.6397,0.0011,0.8415,0.0063

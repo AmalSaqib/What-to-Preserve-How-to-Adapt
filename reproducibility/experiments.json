@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "defaults": {
+    "network": "3d_fullres",
+    "fold": 0,
+    "split": "seg_outputs",
+    "epochs": 100,
+    "save_interval": 25,
+    "checkpoint": "model_final_checkpoint"
+  },
+  "datasets": {
+    "555": {"name": "Task555_ECPC", "modality": "PET/CT", "targets": ["tumor"], "train": 108, "test": 26},
+    "666": {"name": "Task666_UMD", "modality": "T2 MRI + zero channel", "targets": ["uterine wall", "uterine cavity", "myoma", "nabothian cyst"], "train": 214, "test": 52},
+    "778": {"name": "Task778_EndoMRI_T1FS", "modality": "T1FS MRI + zero channel", "targets": ["uterus", "ovaries", "endometrioma", "cyst"], "train": 83, "test": 20}
+  },
+  "experiments": [
+    {"id": "single_task_umd", "group": "single_task", "method": "single_task", "tasks": [666], "plan": "nnUNetPlansv2.1"},
+    {"id": "single_task_ecpc", "group": "single_task", "method": "single_task", "tasks": [555], "plan": "nnUNetPlansv2.1"},
+    {"id": "single_task_endo", "group": "single_task", "method": "single_task", "tasks": [778], "plan": "nnUNetPlansv2.1"},
+    {"id": "ecpc_frozen", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_freeze", "full_body_freeze": true, "base_lr": 0.01},
+    {"id": "ecpc_bottleneck", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E6", "encoder_cli": [6], "blocks": ["B"], "base_lr": 0.01},
+    {"id": "ecpc_e5_b_d5", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E56D0", "encoder_cli": [5, 6], "decoder_cli": [5], "blocks": ["E5", "B", "D5"], "base_lr": 0.01},
+    {"id": "ecpc_e4_b_d4", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E456D01", "encoder_cli": [4, 5, 6], "decoder_cli": [4, 5], "blocks": ["E4", "E5", "B", "D5", "D4"], "base_lr": 0.01},
+    {"id": "ecpc_e3_b_d3", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E3456D012", "encoder_cli": [3, 4, 5, 6], "decoder_cli": [3, 4, 5], "blocks": ["E3", "E4", "E5", "B", "D5", "D4", "D3"], "base_lr": 0.01},
+    {"id": "ecpc_e2_b_d2", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E23456D0123", "encoder_cli": [2, 3, 4, 5, 6], "decoder_cli": [2, 3, 4, 5], "blocks": ["E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2"], "base_lr": 0.01},
+    {"id": "ecpc_e1_b_d1", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E123456D01234", "encoder_cli": [1, 2, 3, 4, 5, 6], "decoder_cli": [1, 2, 3, 4, 5], "blocks": ["E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1"], "base_lr": 0.01},
+    {"id": "ecpc_full", "group": "fixed_lr_depth", "method": "sequential", "tasks": [666, 555], "plan": "nnUNetPlansv2.1", "blocks": ["E0", "E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1", "D0"]},
+    {"id": "ecpc_outer_only", "group": "fixed_lr_depth", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E0D5", "encoder_cli": [0], "decoder_cli": [0], "blocks": ["E0", "D0"], "base_lr": 0.01},
+    {"id": "ecpc_e5_gradient_normalized", "group": "scale_control", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E56D5_gradnorm", "encoder_cli": [5, 6], "decoder_cli": [5], "blocks": ["E5", "B", "D5"], "base_lr": 0.01, "run_seed": 12345, "gradient_lr_control": true, "gradient_calibration_batches": 20, "gradient_lr_reference": "B", "gradient_displacement_log_interval": 5},
+    {"id": "ecpc_middle_gradient_normalized", "group": "scale_control", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E456D45", "encoder_cli": [4, 5, 6], "decoder_cli": [4, 5], "blocks": ["E4", "E5", "B", "D5", "D4"], "base_lr": 0.01, "gradient_lr_control": true, "gradient_calibration_batches": 20, "gradient_lr_reference": "B", "gradient_displacement_log_interval": 5},
+    {"id": "ecpc_e3_gradient_normalized", "group": "scale_control", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E3456D345_gradnorm", "encoder_cli": [3, 4, 5, 6], "decoder_cli": [3, 4, 5], "blocks": ["E3", "E4", "E5", "B", "D5", "D4", "D3"], "base_lr": 0.01, "run_seed": 12345, "gradient_lr_control": true, "gradient_calibration_batches": 20, "gradient_lr_reference": "B", "gradient_displacement_log_interval": 5},
+    {"id": "ecpc_full_gradient_normalized", "group": "scale_control", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_full_gradnorm", "encoder_cli": [0, 1, 2, 3, 4, 5, 6], "decoder_cli": [0, 1, 2, 3, 4, 5], "blocks": ["E0", "E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1", "D0"], "base_lr": 0.01, "run_seed": 12345, "gradient_lr_control": true, "gradient_calibration_batches": 20, "gradient_lr_reference": "B", "gradient_displacement_log_interval": 5},
+    {"id": "ecpc_broad_rms_targeted", "group": "scale_control", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E123456D12345", "encoder_cli": [1, 2, 3, 4, 5, 6], "decoder_cli": [1, 2, 3, 4, 5], "blocks": ["E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1"], "base_lr": 0.008},
+    {"id": "endo_bottleneck", "group": "cross_transition", "method": "channel_preserve", "tasks": [666, 778], "plan": "nnUNetPlansv2.1_unfreeze_E6", "encoder_cli": [6], "blocks": ["B"], "base_lr": 0.01},
+    {"id": "endo_middle", "group": "cross_transition", "method": "channel_preserve", "tasks": [666, 778], "plan": "nnUNetPlansv2.1_unfreeze_E456D45", "encoder_cli": [4, 5, 6], "decoder_cli": [4, 5], "blocks": ["E4", "E5", "B", "D5", "D4"], "base_lr": 0.01},
+    {"id": "endo_broad", "group": "cross_transition", "method": "channel_preserve", "tasks": [666, 778], "plan": "nnUNetPlansv2.1_unfreeze_E123456D12345", "encoder_cli": [1, 2, 3, 4, 5, 6], "decoder_cli": [1, 2, 3, 4, 5], "blocks": ["E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1"], "base_lr": 0.008},
+    {"id": "seed23456_bottleneck", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E6_seed23456", "encoder_cli": [6], "blocks": ["B"], "base_lr": 0.01, "run_seed": 23456},
+    {"id": "seed23456_middle", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E456D45_seed23456", "encoder_cli": [4, 5, 6], "decoder_cli": [4, 5], "blocks": ["E4", "E5", "B", "D5", "D4"], "base_lr": 0.01, "run_seed": 23456},
+    {"id": "seed23456_broad", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E123456D12345_seed23456", "encoder_cli": [1, 2, 3, 4, 5, 6], "decoder_cli": [1, 2, 3, 4, 5], "blocks": ["E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1"], "base_lr": 0.008, "run_seed": 23456},
+    {"id": "seed34567_bottleneck", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E6_seed34567", "encoder_cli": [6], "blocks": ["B"], "base_lr": 0.01, "run_seed": 34567},
+    {"id": "seed34567_middle", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E456D45_seed34567", "encoder_cli": [4, 5, 6], "decoder_cli": [4, 5], "blocks": ["E4", "E5", "B", "D5", "D4"], "base_lr": 0.01, "run_seed": 34567},
+    {"id": "seed34567_broad", "group": "seed_replicates", "method": "channel_preserve", "tasks": [666, 555], "plan": "nnUNetPlansv2.1_unfreeze_E123456D12345_seed34567", "encoder_cli": [1, 2, 3, 4, 5, 6], "decoder_cli": [1, 2, 3, 4, 5], "blocks": ["E1", "E2", "E3", "E4", "E5", "B", "D5", "D4", "D3", "D2", "D1"], "base_lr": 0.008, "run_seed": 34567},
+    {"id": "baseline_sequential", "group": "continual_baselines", "method": "sequential", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1"},
+    {"id": "baseline_rehearsal_10", "group": "continual_baselines", "method": "rehearsal", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_R10", "samples_in_perc": 0.10, "rehearsal_seed": 3299},
+    {"id": "baseline_rehearsal_25", "group": "continual_baselines", "method": "rehearsal", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1", "samples_in_perc": 0.25, "rehearsal_seed": 3299},
+    {"id": "baseline_lwf_t1", "group": "continual_baselines", "method": "lwf", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_LT1", "lwf_temperature": 1.0},
+    {"id": "baseline_lwf_t2", "group": "continual_baselines", "method": "lwf", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1", "lwf_temperature": 2.0},
+    {"id": "baseline_lwf_t4", "group": "continual_baselines", "method": "lwf", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_LT4", "lwf_temperature": 4.0},
+    {"id": "baseline_ewc_001", "group": "continual_baselines", "method": "ewc", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_EWC_l001", "ewc_lambda": 0.01},
+    {"id": "baseline_ewc_01", "group": "continual_baselines", "method": "ewc", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_EWC_l01", "ewc_lambda": 0.1},
+    {"id": "baseline_ewc_1", "group": "continual_baselines", "method": "ewc", "tasks": [666, 555, 778], "plan": "nnUNetPlansv2.1_EWC_l1", "ewc_lambda": 1.0}
+  ]
+}

@@ -1,0 +1,16 @@
+transition,experiment_id,lr_allocation,seed,trainable_parameters,rms_delta,relative_delta_percent,l2_delta,old_task_forgetting,new_task_dice
+UMD->ECPC,ecpc_bottleneck,shared,12345,5531520,0.00442395,34.658,10.4048,-0.0008,0.0073
+UMD->ECPC,ecpc_e5_b_d5,shared,12345,19768960,0.00433243,34.378,19.2630,0.0179,0.0669
+UMD->ECPC,ecpc_e4_b_d4,shared,12345,33863040,0.00485913,37.111,28.2762,0.2714,0.7329
+UMD->ECPC,ecpc_e3_b_d3,shared,12345,42484096,0.00553569,39.617,36.0815,0.6319,0.7860
+UMD->ECPC,ecpc_e2_b_d2,shared,12345,44164992,0.00545404,36.733,36.2458,0.6352,0.8151
+UMD->ECPC,ecpc_e1_b_d1,shared,12345,44364416,0.00551166,35.756,36.7113,0.6383,0.8381
+UMD->ECPC,ecpc_full,shared,12345,44410432,0.00558,35.5,,0.6404,0.8658
+UMD->ECPC,ecpc_broad_rms_targeted,shared_lr_0.008,12345,44364416,0.00464727,30.148,30.9539,0.6384,0.8342
+UMD->ECPC,ecpc_e5_gradient_normalized,scale_aware,12345,19768960,0.00294551,23.373,13.0964,-0.0011,0.6025
+UMD->ECPC,ecpc_middle_gradient_normalized,scale_aware,12345,33863040,0.00226806,17.322,13.1983,0.0252,0.7183
+UMD->ECPC,ecpc_e3_gradient_normalized,scale_aware,12345,42484096,0.00218167,15.614,14.2201,0.1652,0.7715
+UMD->ECPC,ecpc_full_gradient_normalized,scale_aware,12345,44410432,0.00222237,14.119,14.8101,0.6404,0.8670
+UMD->EndoMRI,endo_bottleneck,shared,12345,5531520,0.006812,53.368,16.0215,0.0592,0.0985
+UMD->EndoMRI,endo_middle,shared,12345,33863040,0.006733,51.419,39.1785,0.6380,0.2435
+UMD->EndoMRI,endo_broad,shared_lr_0.008,12345,44364416,0.005728,37.158,38.1515,0.6362,0.3019

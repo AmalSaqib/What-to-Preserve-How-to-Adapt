@@ -143,9 +143,25 @@ class nnUNetTrainerSequential(nnUNetTrainerMultiHead):
             # -- Ensure that the split that has been previously used and the current one are equal -- #
             # -- NOTE: Do this after initialization, since the splits might be different before but still lead to the same level after -- #
             # -- Split simplification. -- #
-            prev_split = self.already_trained_on[str(self.fold)]['used_split']
-            assert self.mh_network.split == prev_split,\
-                "To continue training on the fold {} the same split, ie. \'{}\' needs to be provided, not \'{}\'.".format(self.fold, prev_split, self.mh_network.split)
+            # Backward compatibility: some older checkpoints may not have `used_split`
+            # in the current in-memory metadata dict even though the restored trainer has it.
+            fold_key = str(self.fold)
+            prev_split = None
+            if isinstance(self.already_trained_on.get(fold_key, None), dict):
+                prev_split = self.already_trained_on[fold_key].get('used_split', None)
+            if prev_split is None and hasattr(self.trainer_model, 'already_trained_on'):
+                tr_already = self.trainer_model.already_trained_on
+                if isinstance(tr_already.get(fold_key, None), dict):
+                    prev_split = tr_already[fold_key].get('used_split', None)
+
+            # If split info is available, enforce consistency. Otherwise, adopt current split.
+            if prev_split is not None:
+                assert self.mh_network.split == prev_split,\
+                    "To continue training on the fold {} the same split, ie. \'{}\' needs to be provided, not \'{}\'.".format(self.fold, prev_split, self.mh_network.split)
+            else:
+                self.already_trained_on.setdefault(fold_key, {})
+                self.already_trained_on[fold_key]['used_split'] = self.mh_network.split
+
             # -- Delete the prev_split --> not necessary anymore -- #
             del prev_split
             # -- Reset the mh_network using the base models -- #

@@ -19,6 +19,7 @@ from nnunet.postprocessing.connected_components import load_remove_save, load_po
 from nnunet.training.network_training.nnUNetTrainer import nnUNetTrainer
 from nnunet.utilities.one_hot_encoding import to_one_hot
 from nnunet_ext.training.model_restore_pred import load_model_and_checkpoint_files
+from nnunet_ext.paths import preprocessing_output_dir, default_plans_identifier
 
 def preprocess_save_to_queue(preprocess_fn, q, list_of_lists, output_files, segs_from_prev_stage, classes,
                              transpose_forward):
@@ -119,7 +120,7 @@ def predict_cases(params_ext, model, list_of_lists, output_filenames, folds, sav
                   overwrite_existing=False,
                   all_in_gpu=False, step_size=0.5, checkpoint_name="model_final_checkpoint",
                   segmentation_export_kwargs: dict = None, disable_postprocessing: bool = False,
-                  no_load=False, trainer=None, params=None):
+                  no_load=False, trainer=None, params=None, task_plans_file=None):
     """
     :param segmentation_export_kwargs:
     :param model: folder where the model is saved, must contain fold_x subfolders
@@ -174,6 +175,24 @@ def predict_cases(params_ext, model, list_of_lists, output_filenames, folds, sav
     else:
         assert trainer is not None and params is not None, 'If no_load is True, then you have to provide the restored trainer and its parameters..'
 
+    # In multi-task setups, restored trainer plans may correspond to the last trained task.
+    # Force task-specific plans (from nnUNet_preprocessed) for consistent preprocessing.
+    if task_plans_file is not None and isfile(task_plans_file):
+        # Keep architecture/inference shape settings from the loaded checkpoint while
+        # still updating preprocessing metadata from the evaluated task plans.
+        patch_size_backup = trainer.patch_size
+        net_num_pool_backup = trainer.net_num_pool_op_kernel_sizes
+        net_conv_kernel_backup = trainer.net_conv_kernel_sizes
+        basic_patch_backup = trainer.basic_generator_patch_size
+
+        trainer.process_plans(load_pickle(task_plans_file))
+
+        trainer.patch_size = patch_size_backup
+        trainer.net_num_pool_op_kernel_sizes = net_num_pool_backup
+        trainer.net_conv_kernel_sizes = net_conv_kernel_backup
+        trainer.basic_generator_patch_size = basic_patch_backup
+        print("Using plans for inference from:", task_plans_file)
+
     if segmentation_export_kwargs is None:
         if 'segmentation_export_params' in trainer.plans.keys():
             force_separate_z = trainer.plans['segmentation_export_params']['force_separate_z']
@@ -188,75 +207,146 @@ def predict_cases(params_ext, model, list_of_lists, output_filenames, folds, sav
         interpolation_order = segmentation_export_kwargs['interpolation_order']
         interpolation_order_z = segmentation_export_kwargs['interpolation_order_z']
 
+    # -------------------------------------------------
+    # Inference-time feature ablation (activation drop)
+    # -------------------------------------------------
+    hook_handles = []
+    if params_ext is None:
+        params_ext = {}
+    drop_encoder_block = params_ext.get("drop_encoder_block")
+    drop_decoder_block = params_ext.get("drop_decoder_block")
+    drop_feature_ratio = float(params_ext.get("drop_feature_ratio", 0.1))
+    drop_seed = int(params_ext.get("drop_seed", 0))
+    drop_channel_list_path = params_ext.get("drop_channel_list_path")
+
+    if drop_encoder_block is not None or drop_decoder_block is not None:
+        rng = np.random.default_rng(drop_seed)
+
+        if drop_channel_list_path is not None:
+            raw_selection = np.asarray(np.load(drop_channel_list_path))
+            if raw_selection.ndim != 1:
+                raise ValueError("drop_channel_list_path must contain a one-dimensional array")
+            selected_from_file = raw_selection.astype(int).tolist()
+            if len(selected_from_file) != len(set(selected_from_file)):
+                raise ValueError("drop channel list contains duplicate indices")
+        else:
+            selected_from_file = None
+
+        def _select_channels(num_channels: int):
+            if selected_from_file is not None:
+                invalid = [channel for channel in selected_from_file if not 0 <= channel < num_channels]
+                if invalid:
+                    raise ValueError(
+                        f"drop channel indices {invalid} are outside [0, {num_channels - 1}]"
+                    )
+                if not selected_from_file:
+                    raise ValueError("drop channel list is empty")
+                return selected_from_file
+            k = max(1, int(num_channels * drop_feature_ratio))
+            if k >= num_channels:
+                return list(range(num_channels))
+            return sorted(rng.choice(num_channels, size=k, replace=False).tolist())
+
+        if drop_encoder_block is not None:
+            n_blocks = len(trainer.network.conv_blocks_context)
+            assert 0 <= drop_encoder_block < n_blocks, f"drop_encoder_block={drop_encoder_block} out of range"
+            enc_block = trainer.network.conv_blocks_context[drop_encoder_block]
+
+            def encoder_hook_fn(module, inputs, output):
+                if not torch.is_tensor(output):
+                    return output
+                if not hasattr(encoder_hook_fn, "selected_channels"):
+                    encoder_hook_fn.selected_channels = _select_channels(output.shape[1])
+                    print("Dropping encoder channels:", encoder_hook_fn.selected_channels[:20])
+                out = output.clone()
+                out[:, encoder_hook_fn.selected_channels, ...] = 0.0
+                return out
+
+            hook_handles.append(enc_block.register_forward_hook(encoder_hook_fn))
+            print(f"[EncoderChannelDrop] block={drop_encoder_block}, ratio={drop_feature_ratio}, seed={drop_seed}")
+
+        if drop_decoder_block is not None:
+            n_blocks = len(trainer.network.conv_blocks_localization)
+            assert 0 <= drop_decoder_block < n_blocks, f"drop_decoder_block={drop_decoder_block} out of range"
+            dec_block = trainer.network.conv_blocks_localization[drop_decoder_block]
+
+            def decoder_hook_fn(module, inputs, output):
+                if not torch.is_tensor(output):
+                    return output
+                if not hasattr(decoder_hook_fn, "selected_channels"):
+                    decoder_hook_fn.selected_channels = _select_channels(output.shape[1])
+                    print("Dropping decoder channels:", decoder_hook_fn.selected_channels[:20])
+                out = output.clone()
+                out[:, decoder_hook_fn.selected_channels, ...] = 0.0
+                return out
+
+            hook_handles.append(dec_block.register_forward_hook(decoder_hook_fn))
+            print(f"[DecoderChannelDrop] block={drop_decoder_block}, ratio={drop_feature_ratio}, seed={drop_seed}")
+
     print("starting preprocessing generator")
-    preprocessing = preprocess_multithreaded(trainer, list_of_lists, cleaned_output_files, num_threads_preprocessing,
-                                             segs_from_prev_stage)
-    print("starting prediction...")
-    all_output_files = []
-    for preprocessed in preprocessing:
-        output_filename, (d, dct) = preprocessed
-        all_output_files.append(all_output_files)
-        if isinstance(d, str):
-            data = np.load(d)
-            os.remove(d)
-            d = data
+    try:
+        preprocessing = preprocess_multithreaded(trainer, list_of_lists, cleaned_output_files, num_threads_preprocessing,
+                                                 segs_from_prev_stage)
+        print("starting prediction...")
+        all_output_files = []
+        for preprocessed in preprocessing:
+            output_filename, (d, dct) = preprocessed
+            all_output_files.append(output_filename)
+            if isinstance(d, str):
+                data = np.load(d)
+                os.remove(d)
+                d = data
 
-        print("predicting", output_filename)
+            print("predicting", output_filename)
 
-        #trainer.load_checkpoint(all_best_model_files[0], train=False)
-        #trainer.load_checkpoint_ram(params[0], False)
-        softmax = trainer.predict_preprocessed_data_return_seg_and_softmax(
-            d, do_mirroring=do_tta, mirror_axes=trainer.data_aug_params['mirror_axes'], use_sliding_window=True,
-            step_size=step_size, use_gaussian=True, all_in_gpu=all_in_gpu,
-            mixed_precision=mixed_precision)[1]
-
-        for i, p in enumerate(params[1:]):
-            #trainer.load_checkpoint_ram(p, False)
-            #trainer.load_checkpoint(all_best_model_files[i+1], train=False)
-            softmax += trainer.predict_preprocessed_data_return_seg_and_softmax(
+            softmax = trainer.predict_preprocessed_data_return_seg_and_softmax(
                 d, do_mirroring=do_tta, mirror_axes=trainer.data_aug_params['mirror_axes'], use_sliding_window=True,
                 step_size=step_size, use_gaussian=True, all_in_gpu=all_in_gpu,
                 mixed_precision=mixed_precision)[1]
 
-        if len(params) > 1:
-            softmax /= len(params)
+            for i, p in enumerate(params[1:]):
+                softmax += trainer.predict_preprocessed_data_return_seg_and_softmax(
+                    d, do_mirroring=do_tta, mirror_axes=trainer.data_aug_params['mirror_axes'], use_sliding_window=True,
+                    step_size=step_size, use_gaussian=True, all_in_gpu=all_in_gpu,
+                    mixed_precision=mixed_precision)[1]
 
-        transpose_forward = trainer.plans.get('transpose_forward')
-        if transpose_forward is not None:
-            transpose_backward = trainer.plans.get('transpose_backward')
-            softmax = softmax.transpose([0] + [i + 1 for i in transpose_backward])
+            if len(params) > 1:
+                softmax /= len(params)
 
-        if save_npz:
-            npz_file = output_filename[:-7] + ".npz"
-        else:
-            npz_file = None
+            transpose_forward = trainer.plans.get('transpose_forward')
+            if transpose_forward is not None:
+                transpose_backward = trainer.plans.get('transpose_backward')
+                softmax = softmax.transpose([0] + [i + 1 for i in transpose_backward])
 
-        if hasattr(trainer, 'regions_class_order'):
-            region_class_order = trainer.regions_class_order
-        else:
-            region_class_order = None
+            if save_npz:
+                npz_file = output_filename[:-7] + ".npz"
+            else:
+                npz_file = None
 
-        """There is a problem with python process communication that prevents us from communicating objects 
-        larger than 2 GB between processes (basically when the length of the pickle string that will be sent is 
-        communicated by the multiprocessing.Pipe object then the placeholder (I think) does not allow for long 
-        enough strings (lol). This could be fixed by changing i to l (for long) but that would require manually 
-        patching system python code. We circumvent that problem here by saving softmax_pred to a npy file that will 
-        then be read (and finally deleted) by the Process. save_segmentation_nifti_from_softmax can take either 
-        filename or np.ndarray and will handle this automatically"""
-        bytes_per_voxel = 4
-        if all_in_gpu:
-            bytes_per_voxel = 2  # if all_in_gpu then the return value is half (float16)
-        if np.prod(softmax.shape) > (2e9 / bytes_per_voxel * 0.85):  # * 0.85 just to be save
-            print(
-                "This output is too large for python process-process communication. Saving output temporarily to disk")
-            np.save(output_filename[:-7] + ".npy", softmax)
-            softmax = output_filename[:-7] + ".npy"
+            if hasattr(trainer, 'regions_class_order'):
+                region_class_order = trainer.regions_class_order
+            else:
+                region_class_order = None
 
-        results.append(pool.starmap_async(save_segmentation_nifti_from_softmax,
-                                          ((softmax, output_filename, dct, interpolation_order, region_class_order,
-                                            None, None,
-                                            npz_file, None, force_separate_z, interpolation_order_z),)
-                                          ))
+            bytes_per_voxel = 4
+            if all_in_gpu:
+                bytes_per_voxel = 2
+            if np.prod(softmax.shape) > (2e9 / bytes_per_voxel * 0.85):
+                print("This output is too large for python process-process communication. Saving output temporarily to disk")
+                np.save(output_filename[:-7] + ".npy", softmax)
+                softmax = output_filename[:-7] + ".npy"
+
+            results.append(pool.starmap_async(save_segmentation_nifti_from_softmax,
+                                              ((softmax, output_filename, dct, interpolation_order, region_class_order,
+                                                None, None,
+                                                npz_file, None, force_separate_z, interpolation_order_z),)
+                                              ))
+    finally:
+        for h in hook_handles:
+            try:
+                h.remove()
+            except Exception:
+                pass
 
     print("inference done. Now waiting for the segmentation export to finish...")
     _ = [i.get() for i in results]
@@ -348,24 +438,47 @@ def predict_from_folder(params_ext, model: str, input_folder: str, output_folder
     """
     maybe_mkdir_p(output_folder)
     
+    task_plans_file = None
+    if params_ext is not None and preprocessing_output_dir is not None:
+        plans_identifier = params_ext.get('plans_identifier', default_plans_identifier)
+        evaluate_task = os.path.basename(os.path.dirname(os.path.normpath(input_folder)))
+        c3d = join(preprocessing_output_dir, evaluate_task, plans_identifier + "_plans_3D.pkl")
+        c2d = join(preprocessing_output_dir, evaluate_task, plans_identifier + "_plans_2D.pkl")
+        if isfile(c3d):
+            task_plans_file = c3d
+        elif isfile(c2d):
+            task_plans_file = c2d
+
     if no_load:
         assert trainer is not None and params is not None and plans_path_ is not None, 'If no_load is True, then you have to provide the restored trainer and its parameters as well as plans_path_..'
         plans_path = plans_path_
-    # In Lifelong-nnUNet, the plans.pkl is only created for teh first task, for
-    # which parameters are selected. The trainer path leads to "SEQ", we need
-    # to go up four levels and select only the first task, then rebuild the path
+    # In Lifelong-nnUNet, plans.pkl has historically been stored in the folder
+    # of the first task. For newer layouts, keep a fallback to the original
+    # trainer path if the rewritten location does not exist.
     else:
         original_path = model
         original_path = os.path.normpath(original_path)
         splitted_path = original_path.split(os.sep)
         splitted_path[-4] = '_'.join(splitted_path[-4].split('_')[:2])
-        plans_path = '/'+os.path.join(*splitted_path)
+        rewritten_path = '/' + os.path.join(*splitted_path)
+        original_with_root = '/' + os.path.join(*original_path.split(os.sep))
+
+        if isfile(join(rewritten_path, 'plans.pkl')):
+            plans_path = rewritten_path
+        else:
+            plans_path = original_with_root
     
     if copy_plans:
-        shutil.copy(join(plans_path, 'plans.pkl'), output_folder)
+        if task_plans_file is not None and isfile(task_plans_file):
+            shutil.copy(task_plans_file, join(output_folder, "plans.pkl"))
+        else:
+            shutil.copy(join(plans_path, 'plans.pkl'), output_folder)
 
-    assert isfile(join(plans_path, "plans.pkl")), "Folder with saved model weights must contain a plans.pkl file"
-    expected_num_modalities = load_pickle(join(plans_path, "plans.pkl"))['num_modalities']
+    if task_plans_file is not None and isfile(task_plans_file):
+        expected_num_modalities = load_pickle(task_plans_file)['num_modalities']
+    else:
+        assert isfile(join(plans_path, "plans.pkl")), "Folder with saved model weights must contain a plans.pkl file"
+        expected_num_modalities = load_pickle(join(plans_path, "plans.pkl"))['num_modalities']
 
     # check input folder integrity
     case_ids = check_input_folder_and_return_caseIDs(input_folder, expected_num_modalities)
@@ -396,6 +509,7 @@ def predict_from_folder(params_ext, model: str, input_folder: str, output_folder
                              all_in_gpu=all_in_gpu,
                              step_size=step_size, checkpoint_name=checkpoint_name,
                              segmentation_export_kwargs=segmentation_export_kwargs,
-                             disable_postprocessing=disable_postprocessing, no_load=no_load, trainer=trainer, params=params)
+                             disable_postprocessing=disable_postprocessing, no_load=no_load, trainer=trainer, params=params,
+                             task_plans_file=task_plans_file)
     else:
         raise ValueError("unrecognized mode. Must be normal")

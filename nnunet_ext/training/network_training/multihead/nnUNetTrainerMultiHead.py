@@ -1266,7 +1266,7 @@ class nnUNetTrainerMultiHead(nnUNetTrainerV2): # Inherit default trainer class f
         self.print_to_log_file("loading checkpoint", fname, "train=", train)
         if not self.was_initialized:
             self.initialize(train)
-        saved_model = torch.load(fname, map_location=torch.device('cpu'))
+        saved_model = torch.load(fname, map_location=torch.device('cpu'), weights_only=False)
         # -- Copied from original code -- #
 
         # -- Load the model with the old model if desired -- #
@@ -1318,8 +1318,9 @@ class nnUNetTrainerMultiHead(nnUNetTrainerV2): # Inherit default trainer class f
             different folders where they don't belong.
         """
         # -- First of all remove the fold_ from the path -- #
+        # -- Use dirname so absolute paths keep their leading '/' -- #
         if 'fold_' in output_folder.split(os.path.sep)[-1]:
-            output_folder = os.path.join(*output_folder.split(os.path.sep)[:-1])
+            output_folder = os.path.dirname(output_folder)
             
         # -- Specify if this is a ViT Architecture or not, since the paths are different -- #
         if self.use_vit:

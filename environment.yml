@@ -1,0 +1,14 @@
+name: depth-aware-cl
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch=2.5.1
+  - pytorch-cuda=12.1
+  - pip
+  - pip:
+      - -r requirements.txt
+      - -r requirements-analysis.txt
+      - -e .

@@ -22,7 +22,8 @@ from nnunet_ext.utilities.helpful_functions import *
 
 
 def build_trainer_and_output_path(network, network_trainer, tasks_joined_name, model_joined_name, plans_identifier, transfer_heads, folder_n, use_vit, ViT_task_specific_ln, vit_type, version, do_pod,
-                                  use_head, fold, evaluate_on):
+                                  use_head, fold, evaluate_on, drop_encoder_block=None, drop_decoder_block=None,
+                                  drop_feature_ratio=0.1, drop_channel_list_path=None, drop_seed=0):
     if 'nnUNetTrainerV2' in network_trainer:   # always_last_head makes no sense here, there is only one head
         trainer_path = join(network_training_output_dir_orig, network, tasks_joined_name, network_trainer+'__'+plans_identifier)
         output_path = join(evaluation_output_dir, network, tasks_joined_name, network_trainer+'__'+plans_identifier)
@@ -54,6 +55,17 @@ def build_trainer_and_output_path(network, network_trainer, tasks_joined_name, m
         output_path = join(os.path.sep, *output_path.split(os.path.sep)[:-1], 'pod' if do_pod else 'no_pod')
 
     output_path = join(output_path, 'head_{}'.format(use_head), 'fold_'+str(fold), 'Preds_{}'.format(evaluate_on))
+
+    if drop_channel_list_path is not None:
+        suffix = os.path.basename(drop_channel_list_path).replace(".npy", "")
+        if drop_encoder_block is not None:
+            output_path += f"_encblock{drop_encoder_block}_{suffix}"
+        elif drop_decoder_block is not None:
+            output_path += f"_decblock{drop_decoder_block}_{suffix}"
+    elif drop_encoder_block is not None:
+        output_path += f"_encblock{drop_encoder_block}_drop{int(drop_feature_ratio*100)}_seed{drop_seed}"
+    elif drop_decoder_block is not None:
+        output_path += f"_decblock{drop_decoder_block}_drop{int(drop_feature_ratio*100)}_seed{drop_seed}"
     return trainer_path, output_path
 
 
@@ -61,20 +73,13 @@ def compute_scores_and_build_dict(evaluate_on: str, inference_folder:str, fold: 
     plan = load_pickle(join(inference_folder, "plans.pkl"))
     num_classes = plan['num_classes']
     
-    dataset_directory = join(preprocessing_output_dir, evaluate_on)
-    splits_final = load_pickle(join(dataset_directory, "splits_final.pkl"))
-    splits_final[fold]['val']
+    ground_truth_folder: str = os.path.join(os.environ['nnUNet_raw_data_base'], 'nnUNet_raw_data', evaluate_on, 'labelsTs')
 
-    ground_truth_folder: str = os.path.join(os.environ['nnUNet_raw_data_base'], 'nnUNet_raw_data', evaluate_on, 'labelsTr')
-
-
-    if include_training_data:
-        cases_to_perform_evaluation_on = np.concatenate((splits_final[fold]['val'],(splits_final[fold]['train'])))
-    else:
-        cases_to_perform_evaluation_on = splits_final[fold]['val']
-
-    print("original training cases:", splits_final[fold]['train'])
-    print("performing validation on:", cases_to_perform_evaluation_on)
+    label_files = subfiles(ground_truth_folder, suffix=".nii.gz", join=False)
+    if len(label_files) == 0:
+        raise RuntimeError("No .nii.gz files found in labelsTs: {}".format(ground_truth_folder))
+    cases_to_perform_evaluation_on = sorted([f.replace(".nii.gz", "") for f in label_files])
+    print("performing evaluation on:", cases_to_perform_evaluation_on)
     cases_dict = dict()
     for case in cases_to_perform_evaluation_on:
         file_name = case + ".nii.gz"
@@ -108,10 +113,12 @@ def compute_scores_and_build_dict(evaluate_on: str, inference_folder:str, fold: 
         cases_dict[case] = masks_dict
     return cases_dict
 
+
 def run_evaluation2(network, network_trainer, tasks_list_with_char: tuple[list[str], str], evaluate_on_tasks: str, model_name_joined:str, enable_tta: bool, mixed_precision: bool, chk: str,
                     fold: int, version, vit_type, plans_identifier,do_LSA, do_SPT, always_use_last_head, use_head, use_model, extension,
                     transfer_heads, use_vit, ViT_task_specific_ln, do_pod, include_training_data, evaluate_initialization: bool,
-                    no_delete: bool, legacy_structure: bool):
+                    no_delete: bool, legacy_structure: bool, drop_encoder_block=None, drop_decoder_block=None,
+                    drop_feature_ratio=0.1, drop_seed=0, drop_channel_list_path=None):
     #  run_inference
     ## fixed parameters from inference
     lowres_segmentations = None
@@ -133,7 +140,12 @@ def run_evaluation2(network, network_trainer, tasks_list_with_char: tuple[list[s
         'tasks_list_with_char': tasks_list_with_char,
         'plans_identifier': plans_identifier,
         'vit_type': vit_type,
-        'version': version
+        'version': version,
+        'drop_encoder_block': drop_encoder_block,
+        'drop_decoder_block': drop_decoder_block,
+        'drop_feature_ratio': drop_feature_ratio,
+        'drop_seed': drop_seed,
+        'drop_channel_list_path': drop_channel_list_path,
     }
 
     if evaluate_initialization:
@@ -149,7 +161,9 @@ def run_evaluation2(network, network_trainer, tasks_list_with_char: tuple[list[s
     for evaluate_on in evaluate_on_tasks:
         trainer_path, output_folder = build_trainer_and_output_path(network, network_trainer, tasks_joined_name, model_name_joined, plans_identifier, transfer_heads,
                                                                     folder_n, use_vit, ViT_task_specific_ln, vit_type, version, do_pod, use_head, fold,
-                                                                    evaluate_on)
+                                                                    evaluate_on, drop_encoder_block=drop_encoder_block,
+                                                                    drop_decoder_block=drop_decoder_block, drop_feature_ratio=drop_feature_ratio,
+                                                                    drop_channel_list_path=drop_channel_list_path, drop_seed=drop_seed)
 
         if evaluate_initialization:
             arr = output_folder.split("/")
@@ -162,7 +176,7 @@ def run_evaluation2(network, network_trainer, tasks_list_with_char: tuple[list[s
             arr[-7] = "initialization"
             output_folder = join("/", *arr)
 
-        input_folder = os.path.join(os.environ['nnUNet_raw_data_base'], 'nnUNet_raw_data', evaluate_on, 'imagesTr')
+        input_folder = os.path.join(os.environ['nnUNet_raw_data_base'], 'nnUNet_raw_data', evaluate_on, 'imagesTs')
 
         predict_from_folder(params_ext, trainer_path, input_folder, output_folder, [fold], save_npz, num_threads_preprocessing,
                             num_threads_nifti_save, lowres_segmentations, part_id, num_parts, enable_tta,

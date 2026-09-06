@@ -5,6 +5,32 @@
 /.pytest_cache/*
 /additional/*
 
+# Research data and generated artifacts must never be committed.
+/data/
+/datasets/
+/results/
+/evaluation/
+/artifacts/
+/outputs/
+*.nii
+*.nii.gz
+*.model
+*.model.pkl
+*.ckpt
+*.pth
+*.pt
+*.pkl
+*.npy
+*.npz
+!reproducibility/reported_results.csv
+!reproducibility/reported_seed_summary.csv
+
+# Local experiment configuration and credentials.
+.env
+.env.*
+!.env.example
+run_environment.txt
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
