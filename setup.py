@@ -19,8 +19,7 @@ setup(
     install_requires=["tqdm"],
     license="Apache-2.0",
     project_urls={
-        "Source code": "https://github.com/AmalSaqib/What-to-Preserve-How-to-Adapt",
-        "Upstream framework": "https://github.com/MECLabTUDA/Lifelong-nnUNet",
+        "Source code": "https://github.com/MECLabTUDA/Lifelong-nnUNet",
     },
     entry_points={
         "console_scripts": [
