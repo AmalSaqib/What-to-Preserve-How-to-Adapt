@@ -1,4 +1,4 @@
-# Where and How to Adapt
+# What and Where to Adapt
 
 Research code for studying depth-constrained and scale-aware adaptation in
 continual 3D medical image segmentation. The implementation extends
